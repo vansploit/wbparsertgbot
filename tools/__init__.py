@@ -1,0 +1,1 @@
+from .sendel import send_and_delete_msg as sendel
