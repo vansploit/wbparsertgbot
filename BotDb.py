@@ -28,14 +28,15 @@ class Database:
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                tg_id INTEGER NOT NULL,
+                art INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 url TEXT NOT NULL,
                 status TEXT DEFAULT 'active',
                 price REAL,
                 last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                FOREIGN KEY (tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
             )
             ''')
             
@@ -52,7 +53,7 @@ class Database:
             
             # Создание индексов
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_tg_id ON users(tg_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_tg_id ON orders(tg_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_price_history_order_id ON price_history(order_id)')
 
     def _get_connection(self):
@@ -64,7 +65,7 @@ class Database:
         """Проверяет, существует ли пользователь с указанным telegram ID"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT 1 FROM users WHERE tg_id = ?', (tg_id,))
+            cursor.execute('SELECT * FROM users WHERE tg_id = ?', (tg_id,))
             return cursor.fetchone() is not None
     def add_user(self, tg_id: int, username: Optional[str] = None, privilege: Optional[str] = None) -> int:
         """Добавляет нового пользователя"""
@@ -110,9 +111,16 @@ class Database:
             cursor.execute('DELETE FROM users WHERE tg_id = ?', (tg_id,))
 
     # ========== Orders Functions ==========
+    def order_exists(self, art: int, tg_id: int) -> bool:
+        """Проверяет, существует ли пользователь с указанным telegram ID"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM orders WHERE art = ? AND tg_id = ?', (art, tg_id,))
+            return cursor.fetchone() is not None
     def add_order(
         self,
-        user_tg_id: int,
+        tg_id: int,
+        art: int,
         name: str,
         url: str,
         price: float,
@@ -123,15 +131,15 @@ class Database:
             cursor = conn.cursor()
             
             # Получаем user_id по tg_id
-            user = self.get_user_by_tg_id(user_tg_id)
+            user = self.get_user_by_tg_id(tg_id)
             if not user:
-                raise ValueError(f"User with tg_id {user_tg_id} not found")
+                raise ValueError(f"User with tg_id {tg_id} not found")
             
             cursor.execute(
                 '''INSERT INTO orders 
-                (user_id, name, url, status, price) 
-                VALUES (?, ?, ?, ?, ?)''',
-                (user['id'], name, url, status, price)
+                (tg_id, art, name, url, status, price) 
+                VALUES (?, ?, ?, ?, ?, ?)''',
+                (tg_id, art, name, url, status, price)
             )
             order_id = cursor.lastrowid
             
@@ -149,17 +157,28 @@ class Database:
             order = cursor.fetchone()
             return dict(order) if order else None
 
-    def get_user_orders(self, user_tg_id: int) -> List[Dict]:
+    def get_order_by_art(self, art: int, tg_id: int) -> Optional[Dict]:
+        """Получает заказ по ID"""
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM orders WHERE art = ? AND tg_id = ?', (art, tg_id))
+            order = cursor.fetchone()
+            return dict(order) if order else None
+
+
+
+    def get_user_orders(self, tg_id: int) -> List[Dict]:
         """Получает все заказы пользователя"""
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            user = self.get_user_by_tg_id(user_tg_id)
+            user = self.get_user_by_tg_id(tg_id)
             if not user:
                 return []
             
-            cursor.execute('SELECT * FROM orders WHERE user_id = ?', (user['id'],))
+            cursor.execute('SELECT * FROM orders WHERE tg_id = ?', (tg_id,))
             return [dict(row) for row in cursor.fetchall()]
 
     def update_order_price(self, order_id: int, new_price: float):
@@ -203,17 +222,17 @@ class Database:
             (order_id, price)
         )
 
-    def get_price_history(self, order_id: int, limit: int = 10) -> List[Dict]:
+    def get_price_history(self, art: int, tg_id: int, limit: int = 10) -> List[Dict]:
         """Получает историю цен для заказа"""
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
                 '''SELECT * FROM price_history 
-                WHERE order_id = ? 
+                WHERE art = ? AND tg_id = ?
                 ORDER BY created_at DESC 
                 LIMIT ?''',
-                (order_id, limit)
+                (art, tg_id, limit)
             )
             return [dict(row) for row in cursor.fetchall()]
 
